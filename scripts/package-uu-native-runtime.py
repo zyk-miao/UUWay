@@ -188,7 +188,8 @@ PRESET_INPUT_CONTRACT = INPUT_CONTRACT
 PINNED_MAIN_SCRIPTS = {('scripts/' + name): ('scripts/' + name) for name in (
     'uu-native-service.py', 'uu-native-trial.py', 'uu-native-capture-broker.py',
     'probe-wayland-portal.py', 'native_runtime_state.py',
-    'native_display_confirmation.py', 'desktop_backend.py', 'package-uu-native-runtime.py')}
+    'native_display_confirmation.py', 'desktop_backend.py', 'package-uu-native-runtime.py',
+    'mutter-direct-capture.py')}
 # The supervisor applies the default cover from inside its immutable bundle.
 # Keep the artwork beside the pinned Python entrypoints so a source-only
 # repack cannot accidentally point a new service at a missing development
@@ -518,8 +519,7 @@ def verify(directory):
             inputs.pop('assets/uuway-penguin.bmp', None)
         # This wrapper was added with multi-output capture. Old immutable
         # bundles did not need it; keep them verifiable for update/rollback.
-        if (contract not in (VIRTUAL_INPUT_CONTRACT, VAAPI_VIRTUAL_INPUT_CONTRACT) and
-                'scripts/mutter-direct-capture.py' not in manifest['files']):
+        if 'scripts/mutter-direct-capture.py' not in manifest['files']:
             inputs.pop('scripts/mutter-direct-capture.py', None)
     if set(manifest['files']) != set(inputs):
         raise ValueError('Missing or unexpected bridge component')

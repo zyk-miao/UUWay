@@ -813,6 +813,9 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
         if is_stopping():
             return
         if with_input:
+            if plasma_wayland():
+                state_tools.write_private(directory / 'input-map.json',
+                                          dict(version=1, map=topology['input_map']))
             input_token = secrets.token_hex(32)
             with (directory / 'input.token').open('x') as output:
                 os.chmod(directory / 'input.token', 0o600)
@@ -829,7 +832,9 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
                         '--token-file', str(directory / 'input.token'), '--seconds', str(0 if continuous else min(duration + 60, 3600)),
                         '--single-output', *(['--text-socket', str(text_socket)] if text_socket is not None else []),
                         # KDE: place each Windows monitor on KWin's absolute axes.
-                        *(['--output-map', topology['input_map']] if 'input_map' in topology else []),
+                        *(['--output-map-file', str(directory / 'input-map.json')]
+                          if plasma_wayland() else
+                          ['--output-map', topology['input_map']] if 'input_map' in topology else []),
                         *(['--settings-file', str(Path.home() / '.config/uurb/input-settings.json')]
                           if verified.get('native_input_settings_included') else [])],
                         stdin=subprocess.PIPE if password is not None else subprocess.DEVNULL,
@@ -953,9 +958,16 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
                             # alone so a later ACK replay window stays honest.
                             topology_check = time.monotonic() + 1
                         else:
+                            if plasma_wayland() and observed_topology['input_map'] != topology['input_map']:
+                                state_tools.write_private(directory / 'input-map.json',
+                                                          dict(version=1, map=observed_topology['input_map']))
                             accepted_topology = topology_stabilizer.observe(observed_topology, observation_ns)
                             if accepted_topology is not None:
-                                if preserve_display_session and can_recreate_display_in_place(
+                                if plasma_wayland():
+                                    topology = accepted_topology
+                                    event('display_layout_updated', input_process_retained=True,
+                                          uu_process_retained=True)
+                                elif preserve_display_session and can_recreate_display_in_place(
                                         topology, accepted_topology, owned_virtual_connectors(display_socket)):
                                     # Target-aware bounded fallback: UU may already
                                     # have recreated video before this topology poll.

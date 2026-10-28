@@ -1,12 +1,19 @@
 #!/usr/bin/python3
-"""Capture one compositor output through Mutter's ScreenCast D-Bus.
+"""Capture one compositor output directly, without a per-connection dialog.
 
-The installed desktop service selects the same explicit connector that its
-display API exposes to UU. Initial setup still checks screen sharing through
-the portal; reconnects and mode changes use the selected Mutter source so an
-expired, one-use portal restore token cannot strand a remote connection at an
-unattended consent dialog. The legacy single-output broker retains its portal
-path. The capture worker receives a private PipeWire connection.
+Two sources are supported:
+
+* ``--connector``: Mutter's ScreenCast D-Bus for that monitor. The installed
+  desktop service selects the same explicit connector that its display API
+  exposes to UU, so an expired, one-use portal restore token cannot strand a
+  remote connection at an unattended consent dialog.
+* ``--node``: a PipeWire node the display service already owns. Plasma's
+  ScreenCast portal creates a virtual output for UU's IDD feature and returns
+  its stream node; there is no portal grant to restore for an output the
+  portal itself created.
+
+The legacy single-output broker retains its portal path. The capture worker
+receives a private PipeWire connection.
 """
 import argparse
 import json
@@ -44,8 +51,8 @@ def producer_environment(args, base):
                 'UURB_CURSOR_METADATA_BACKEND', 'UURB_CURSOR_COMPOSITE'):
         environment.pop(key, None)
     if args.cursor_mode in ('metadata', 'composited'):
-        # Mutter uses cursor id=0 for "hidden", distinct from no update.
-        environment['UURB_CURSOR_METADATA_BACKEND'] = 'mutter'
+        # KDE 使用标准 SPA 光标信息；Mutter 的隐藏标记需要单独处理。
+        environment['UURB_CURSOR_METADATA_BACKEND'] = 'spa' if args.node >= 0 else 'mutter'
         environment['UURB_CURSOR_STATE_FD'] = str(args.cursor_state_fd)
     if args.cursor_mode == 'composited':
         environment['UURB_CURSOR_COMPOSITE'] = '1'
@@ -84,25 +91,30 @@ def run(args):
 
     previous = {sig: signal.signal(sig, stop) for sig in (signal.SIGTERM, signal.SIGINT)}
     try:
-        session = call(bus, ROOT, SC, 'CreateSession', GLib.Variant('(a{sv})', ({},)))[0]
-        stream = call(bus, session, SC + '.Session', 'RecordMonitor',
-                      GLib.Variant('(sa{sv})', (args.connector,
-                          {'cursor-mode': GLib.Variant('u', CURSOR_MODES[args.cursor_mode])})))[0]
-        nodes = []
-        subscription = bus.signal_subscribe(SC, SC + '.Stream', 'PipeWireStreamAdded', stream, None,
-            Gio.DBusSignalFlags.NONE,
-            lambda connection, sender, path, interface, signal, params: nodes.append(params.unpack()[0]))
-        call(bus, session, SC + '.Session', 'Start')
-        deadline = time.monotonic() + 10
-        while not nodes and not stopping and time.monotonic() < deadline:
-            context = GLib.MainContext.default()
-            while context.pending():
-                context.iteration(False)
-            time.sleep(0.01)
-        if stopping:
-            return 0
-        if len(nodes) != 1:
-            return fail('no unambiguous PipeWire source')
+        if args.node >= 0:
+            # A portal-created virtual output is already owned by the display
+            # service; its node is the capture source and no consent is asked.
+            nodes = [args.node]
+        else:
+            session = call(bus, ROOT, SC, 'CreateSession', GLib.Variant('(a{sv})', ({},)))[0]
+            stream = call(bus, session, SC + '.Session', 'RecordMonitor',
+                          GLib.Variant('(sa{sv})', (args.connector,
+                              {'cursor-mode': GLib.Variant('u', CURSOR_MODES[args.cursor_mode])})))[0]
+            nodes = []
+            subscription = bus.signal_subscribe(SC, SC + '.Stream', 'PipeWireStreamAdded', stream, None,
+                Gio.DBusSignalFlags.NONE,
+                lambda connection, sender, path, interface, signal, params: nodes.append(params.unpack()[0]))
+            call(bus, session, SC + '.Session', 'Start')
+            deadline = time.monotonic() + 10
+            while not nodes and not stopping and time.monotonic() < deadline:
+                context = GLib.MainContext.default()
+                while context.pending():
+                    context.iteration(False)
+                time.sleep(0.01)
+            if stopping:
+                return 0
+            if len(nodes) != 1:
+                return fail('no unambiguous PipeWire source')
         runtime = Path(os.environ['XDG_RUNTIME_DIR']).resolve() / 'pipewire-0'
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM | socket.SOCK_CLOEXEC) as remote:
             remote.connect(str(runtime))
@@ -114,8 +126,10 @@ def run(args):
                 inherited.append(args.cursor_state_fd)
             if args.capture_status_fd >= 3:
                 inherited.append(args.capture_status_fd)
-            print('UURB_CAPTURE_CURSOR_POLICY ' + json.dumps(dict(connector=args.connector,
-                  cursor_mode=args.cursor_mode, mutter_cursor_mode=CURSOR_MODES[args.cursor_mode],
+            print('UURB_CAPTURE_CURSOR_POLICY ' + json.dumps(dict(
+                  connector=args.connector if args.node < 0 else 'portal-virtual',
+                  cursor_mode=args.cursor_mode,
+                  mutter_cursor_mode=CURSOR_MODES[args.cursor_mode] if args.node < 0 else None,
                   gpu_composite=args.cursor_mode == 'composited')), file=sys.stderr, flush=True)
             if stopping:
                 return 0
@@ -140,7 +154,8 @@ def run(args):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--connector', required=True)
+    parser.add_argument('--connector')
+    parser.add_argument('--node', type=int, default=-1)
     parser.add_argument('--gpu-relay-fd', type=int, required=True)
     parser.add_argument('--duration-seconds', type=int, default=0)
     parser.add_argument('--cursor-mode', choices=sorted(CURSOR_MODES), default='hidden')
@@ -148,6 +163,8 @@ if __name__ == '__main__':
     parser.add_argument('--capture-status-fd', type=int, default=-1)
     parser.add_argument('--capture-binary', type=Path, required=True)
     arguments = parser.parse_args()
+    if (arguments.connector is None) == (arguments.node < 0):
+        parser.error('exactly one of --connector or --node is required')
     try:
         raise SystemExit(run(arguments))
     except Exception as error:

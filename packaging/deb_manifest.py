@@ -18,12 +18,14 @@ LIB = 'usr/lib/uuway'
 
 # Runtime Python only.  Build, audit and stage tools stay out of the package.
 RUNTIME_SCRIPTS = (
+    'authorize-kde-virtual-display.py',
     'configure-uu-wine-mappings.py',
     'desktop_backend.py',
     'install-uu-native-service.py',
     'native_display_config.py',
     'native_display_confirmation.py',
     'native_display_guardian.py',
+    'native_display_kde_virtual.py',
     'native_display_kscreen.py',
     'native_display_topology.py',
     'mutter-direct-capture.py',

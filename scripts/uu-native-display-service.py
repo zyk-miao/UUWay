@@ -31,16 +31,32 @@ def mutter_services(config, parent):
     return backend, virtual, guardian
 
 
-def kscreen_services(parent):
+def kscreen_services(config, parent):
     from native_display_kscreen import KScreenDisplay, SelectedKScreenDisplay, UnavailableVirtualDisplays
     backend = KScreenDisplay()
-    return backend, UnavailableVirtualDisplays(), DisplayRouter(backend, parent,
-                                                                selected_factory=SelectedKScreenDisplay)
+    manifest = read_private(Path(config['bundle']) / 'manifest.json')
+    if manifest.get('contract', {}).get('virtual_display_emulation') is True:
+        # Plasma 6.8 can create a real KWin output through the ScreenCast
+        # portal's virtual source; the rest of the IDD contract stays UUWay's.
+        from native_display_kde_virtual import KScreenVirtualDisplays
+        virtual = KScreenVirtualDisplays(
+            backend, parent / 'virtual-portal-state.json',
+            parent / 'virtual-layout-recovery.json',
+            user_settings=Path(config['prefix']) / 'drive_c/ProgramData/Netease/GameViewer/user_setting.ini')
+    else:
+        virtual = UnavailableVirtualDisplays()
+    return backend, virtual, DisplayRouter(backend, parent,
+                                            selected_factory=SelectedKScreenDisplay)
 
 
 def recover(config):
-    # KScreen changes are never written, so Plasma has no layout to restore.
-    if not plasma_wayland():
+    # KScreen changes are never written, so Plasma has no saved layout to
+    # restore. A virtual-screen session may still have disabled the physical
+    # outputs; put those back before anything else.
+    if plasma_wayland():
+        from native_display_kde_virtual import recover_layout as recover_virtual
+        recover_virtual(config)
+    else:
         from native_virtual_display import recover_layout
         recover_layout(config)
 
@@ -59,6 +75,7 @@ def run(config_path):
     stopping = False
     guardian = None
     virtual = None
+    last_snapshot = None
 
     def stop(*unused):
         nonlocal stopping
@@ -84,7 +101,7 @@ def run(config_path):
                 raise RuntimeError('Display endpoint changed during recovery')
             endpoint.unlink()
         if plasma_wayland():
-            backend, virtual, guardian = kscreen_services(parent)
+            backend, virtual, guardian = kscreen_services(config, parent)
         else:
             backend, virtual, guardian = mutter_services(config, parent)
         guardian.expire()
@@ -162,7 +179,26 @@ def run(config_path):
                     else:
                         result = dict(ok=True, **guardian.request(request))
                         if op == 'inspect':
+                            result['display_backend'] = 'kscreen' if plasma_wayland() else 'mutter'
+                            decorate = getattr(virtual, 'decorate', None)
+                            if decorate is not None:
+                                decorate(result['monitors'])
                             result['virtual_displays'] = virtual.status()
+                            # The capture broker needs the portal stream node of
+                            # each owned virtual output; a portal grant cannot
+                            # describe an output the portal created itself.
+                            for monitor in result.get('monitors') or []:
+                                find = getattr(virtual, 'find', None)
+                                screen = find(monitor.get('connector')) if find is not None else None
+                                if screen and isinstance(screen.get('node'), int):
+                                    monitor['node'] = screen['node']
+                            snapshot = [[m.get('connector'), m.get('virtual')]
+                                        for m in result.get('monitors') or []]
+                            if snapshot != last_snapshot:
+                                last_snapshot = snapshot
+                                print(json.dumps(dict(event='display_snapshot',
+                                                      serial=result.get('serial'),
+                                                      monitors=snapshot)), flush=True)
                             inspect_failure = None
                 except Exception as error:
                     result = dict(ok=False, error_type=type(error).__name__)

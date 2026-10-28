@@ -121,7 +121,10 @@ def install(bundle, prefix, restore_state, state_parent, text_socket, cursor_mod
             # KDE's display service only enumerates outputs; it cannot apply modes.
             content = (content.replace('@DISPLAY_WANTS@', 'Wants=uu-native-display.service')
                               .replace('@DISPLAY_AFTER@', 'After=uu-native-display.service')
-                              .replace('@DISPLAY_RECONFIGURE@', '' if kde_readonly else ' --allow-display-reconfigure'))
+                              # KDE now owns a virtual-output backend with a
+                              # journalled physical restore, so the display
+                              # adapter may expose UU's IDD path.
+                              .replace('@DISPLAY_RECONFIGURE@', ' --allow-display-reconfigure'))
         fd, temporary = tempfile.mkstemp(prefix='.uurb-service-', dir=unit_dir)
         try:
             with os.fdopen(fd, 'w') as stream:
