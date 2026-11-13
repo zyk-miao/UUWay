@@ -89,7 +89,13 @@ visible UU window and removes its own links and registry changes before
 requesting Portal authorization. This is needed when a plain Wine launch
 does not open the UU login window. Keep one physical output active during
 initial tests. AUR upgrades are handled by pacman/AUR tools followed by
-`uuway refresh`; `uuway update install`/`rollback` remain disabled on Arch.
+`uuway refresh --yes`; `uuway update install`/`rollback` remain disabled on Arch.
+The package prints a setup reminder after installation and a refresh reminder
+after upgrades. Run the command as the ordinary desktop user in a logged-in
+Plasma Wayland session, not with `sudo`. Each configured user needs to refresh
+their own runtime; this restarts remote hosting and disconnects active remote
+sessions. The reminder does not run the refresh automatically, and upgrading
+the AUR package does not upgrade the official UU Windows client inside Wine.
 The build does not rely on ignored `build/` files or Docker. Private Wine
 retains its upstream layout under `/opt/uuway`, which produces a generic
 `namcap` ELF-location warning; its upstream binaries also retain WineHQ's

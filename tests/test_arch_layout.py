@@ -1,6 +1,8 @@
 """The pacman tree should contain only the runtime manifest's files."""
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -45,6 +47,44 @@ class StageArchTests(unittest.TestCase):
                     patch.object(sys, 'argv', ['stage-arch.py', str(root)]):
                 with self.assertRaises(FileNotFoundError):
                     stage_arch.main()
+
+
+class AurInstallNoticeTests(unittest.TestCase):
+    def notice(self, callback):
+        script = ROOT / 'packaging/aur/uuway.install'
+        result = subprocess.run(
+            ['/bin/bash', '--noprofile', '--norc', '-c',
+             'source "$1"; "$2" 1.2.0-2 1.2.0-1', 'notice', str(script), callback],
+            env=dict(os.environ, PATH='/no-external-commands', BASH_ENV='/dev/null'),
+            capture_output=True, text=True, check=True)
+        self.assertEqual(result.stderr, '')
+        return result.stdout
+
+    def test_recipe_and_srcinfo_include_install_script(self):
+        directory = ROOT / 'packaging/aur'
+        result = subprocess.run(
+            ['/bin/bash', '--noprofile', '--norc', '-c',
+             'source "$1"; printf "%s" "$install"',
+             'recipe', str(directory / 'PKGBUILD')],
+            capture_output=True, text=True, check=True)
+        self.assertEqual(result.stdout, 'uuway.install')
+        self.assertTrue((directory / result.stdout).is_file())
+        self.assertIn('\tinstall = uuway.install\n', (directory / '.SRCINFO').read_text())
+
+    def test_first_install_explains_setup(self):
+        message = self.notice('post_install')
+        self.assertIn('uuway setup --installer /path/to/uuyc.exe', message)
+        self.assertIn('Plasma Wayland', message)
+        self.assertIn('without sudo', message)
+        self.assertNotIn('uuway refresh --yes', message)
+
+    def test_upgrade_explains_manual_refresh_and_disconnect(self):
+        message = self.notice('post_upgrade')
+        self.assertIn('uuway refresh --yes', message)
+        self.assertIn('Each configured desktop user', message)
+        self.assertIn('without sudo', message)
+        self.assertIn('disconnects active remote-control sessions', message)
+        self.assertIn('does not upgrade the UU Windows client', message)
 
 
 if __name__ == '__main__':
