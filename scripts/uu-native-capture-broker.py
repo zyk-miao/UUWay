@@ -343,11 +343,16 @@ def producer_failure(log):
 
 
 def producer_command(restore_state, channel, duration, cursor_mode, cursor_fd=None, status_fd=None,
-                     capture_binary=None, connector=None):
+                     capture_binary=None, connector=None, node=None):
     if cursor_mode not in ('embedded', 'hidden', 'metadata', 'composited'):
         raise ValueError('Unsupported capture cursor policy')
     if (cursor_mode in ('metadata', 'composited')) != (cursor_fd is not None):
         raise ValueError('Metadata mode requires its private cursor channel')
+    if node is not None:
+        if type(node) is not int or not 0 < node <= 0xffffffff:
+            raise ValueError('Invalid virtual screen stream node')
+        return direct_command(connector, channel, duration, cursor_mode, capture_binary,
+                              cursor_fd, status_fd, node=node)
     plasma = plasma_wayland()
     if connector is not None and not plasma:
         return direct_command(connector, channel, duration, cursor_mode, capture_binary,
@@ -407,12 +412,29 @@ def display_monitors(path):
                     any(type(item.get(axis, 0)) is not int or not -65536 <= item.get(axis, 0) <= 65536
                         for axis in ('x', 'y'))):
                 return []
+            node = item.get('node')
+            if node is not None and (type(node) is not int or not 0 < node <= 0xffffffff):
+                return []
+            if node is not None and any(type(item.get(axis)) is not int or
+                                        not 2 <= item[axis] <= 4096 or item[axis] % 2
+                                        for axis in ('width', 'height')):
+                raise ValueError('Invalid virtual screen capture dimensions')
             result.append(dict(index=index, connector=item['connector'],
                                gdi_name=item['gdi_name'], virtual=bool(item.get('virtual')),
+                               node=node, width=item.get('width'), height=item.get('height'),
                                x=item.get('x', 0), y=item.get('y', 0)))
         return result
     except (OSError, ValueError, json.JSONDecodeError):
         return []
+
+
+def producer_environment(monitor):
+    environment = dict(os.environ)
+    environment.pop('UURB_CAPTURE_SIZE', None)
+    if monitor is not None and monitor.get('node') is not None:
+        # KWin 虚拟输出会采用 PipeWire 协商的尺寸，必须明确请求显示器的实际尺寸。
+        environment['UURB_CAPTURE_SIZE'] = '%dx%d' % (monitor['width'], monitor['height'])
+    return environment
 
 
 def resolve_monitor(monitors, device):
@@ -451,11 +473,12 @@ def transaction_requires_new_capture(parent, index, started_ns):
 
 
 def direct_command(connector, channel, duration, cursor_mode, capture_binary,
-                   cursor_fd=None, status_fd=None):
+                   cursor_fd=None, status_fd=None, node=None):
     if not capture_binary:
         raise ValueError('Direct compositor capture requires a pinned producer')
     command = ['/usr/bin/python3', str(ROOT / 'scripts/mutter-direct-capture.py'),
-               '--connector', connector, '--gpu-relay-fd', str(channel),
+               *(['--node', str(node)] if node is not None else ['--connector', connector]),
+               '--gpu-relay-fd', str(channel),
                '--duration-seconds', str(duration), '--cursor-mode', cursor_mode,
                '--capture-binary', str(capture_binary)]
     if cursor_fd is not None:
@@ -650,9 +673,11 @@ def run(path, restore_state, duration=3600, cursor_mode='embedded', cursor_path=
             cursor_fd = cursor.fd if cursor and cursor_mode in ('metadata', 'composited') else None
             inherited = (connection.fileno(), status_channel.writer.fileno()) + ((cursor_fd,) if cursor_fd is not None else ())
             connector = monitor['connector'] if monitor else None
-            producer = subprocess.Popen(producer_command(restore_state, connection.fileno(), duration, cursor_mode,
-                cursor_fd, status_channel.writer.fileno(), capture_binary, connector), pass_fds=inherited,
-                stdout=log, stderr=log, start_new_session=True)
+            node = monitor.get('node') if monitor else None
+            producer = subprocess.Popen(producer_command(restore_state, connection.fileno(), duration,
+                cursor_mode, cursor_fd,
+                status_channel.writer.fileno(), capture_binary, connector, node), pass_fds=inherited,
+                stdout=log, stderr=log, start_new_session=True, env=producer_environment(monitor))
             status_channel.writer.close()
             event('capture_started', generation=generation, cursor_mode=cursor_mode, screen_id=requested)
     finally:
@@ -907,10 +932,12 @@ def run_multi(path, restore_state, duration=3600, cursor_mode='embedded', cursor
             # left the primary track waiting for a dialog while secondary
             # tracks already used explicit Mutter sources.
             connector = monitor['connector'] if monitor else None
+            node = monitor.get('node') if monitor else None
             try:
                 producer = subprocess.Popen(producer_command(restore_state, candidate.fileno(), duration,
-                    cursor_mode, cursor_fd, status_channel.writer.fileno(), capture_binary, connector),
-                    pass_fds=inherited, stdout=log, stderr=log, start_new_session=True)
+                    cursor_mode, cursor_fd, status_channel.writer.fileno(), capture_binary, connector, node),
+                    pass_fds=inherited, stdout=log, stderr=log, start_new_session=True,
+                    env=producer_environment(monitor))
             except Exception:
                 status_channel.close()
                 log.close()

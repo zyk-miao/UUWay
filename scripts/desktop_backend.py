@@ -54,6 +54,15 @@ def _even_size(size):
         for key in ('width', 'height'))
 
 
+def _output_active(output):
+    """Whether KWin is currently driving this output.
+
+    KWin omits ``enabled`` for portal-owned virtual outputs: they exist exactly
+    while their ScreenCast session lives, so their presence is the state.
+    """
+    return output.get('enabled') is True or str(output.get('name', '')).startswith('Virtual-')
+
+
 def _plasma_output(output):
     """Validated geometry of one enabled output, or None when Windows cannot show it."""
     name, position, size, scale = output.get('name'), output.get('pos'), output.get('size'), output.get('scale')
@@ -77,6 +86,7 @@ def _plasma_output(output):
              len(current) == 1 and current[0].get('size') == size and
              type(refresh) in (int, float) and math.isfinite(refresh) and refresh >= 1)
     return dict(name=name, logical=logical, primary=output.get('priority') == 1, shown=shown,
+                virtual=name.startswith('Virtual-'),
                 width=size['width'], height=size['height'], scale=float(scale), mode=output.get('currentModeId'),
                 refresh=round(min(float(refresh), float(MAX_WINDOWS_REFRESH_HZ)), 3) if shown else None)
 
@@ -95,7 +105,7 @@ def plasma_layout(data):
     outputs = data.get('outputs') if isinstance(data, dict) else None
     if not isinstance(outputs, list) or not 1 <= len(outputs) <= 16:
         raise RuntimeError('Invalid KDE output list')
-    enabled = [_plasma_output(item) for item in outputs if isinstance(item, dict) and item.get('enabled') is True]
+    enabled = [_plasma_output(item) for item in outputs if isinstance(item, dict) and _output_active(item)]
     shown = [item for item in enabled if item['shown']]
     if not shown:
         raise RuntimeError('KDE 没有可串流的显示器；请保持至少一台显示器未镜像、未旋转')
@@ -127,7 +137,7 @@ def plasma_layout(data):
         x0, y0 = axis(logical['x'], left, right), axis(logical['y'], top, bottom)
         monitors.append(dict(
             index=index, connector=item['name'], gdi_name='\\\\.\\DISPLAY%d' % (index + 1),
-            friendly=item['name'], virtual=False, primary=index == 0, mode=item['mode'],
+            friendly=item['name'], virtual=item['virtual'], primary=index == 0, mode=item['mode'],
             x=windows_offset(logical['x'], primary['logical']['x']),
             y=windows_offset(logical['y'], primary['logical']['y']),
             width=item['width'], height=item['height'], refresh=item['refresh'], scale=item['scale'],
@@ -153,8 +163,8 @@ def input_map(monitors):
 def plasma_topology(data):
     """Worker topology: the primary output as the tracked origin, plus the whole input map.
 
-    The map covers every shown output, so any change to any of them is a
-    topology change that restarts the worker with a fresh input mapping.
+    The map covers every shown output and is refreshed by the input worker
+    while the remote session remains active.
     """
     layout = plasma_layout(data)
     primary = layout['monitors'][0]

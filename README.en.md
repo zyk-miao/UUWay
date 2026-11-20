@@ -18,11 +18,12 @@
 | Text clipboard, remote terminal and file transfer | Inherited from upstream; not fully accepted on KDE |
 | Multiple monitors | Up to 8, switchable from the viewer; each monitor is granted separately (verified with two monitors on 2026-10-26) |
 | Remote resolution/scale changes | KDE profile is read-only; change these in local System Settings |
+| Turn the controlled display off | Verified on Plasma 6.8 / KWin 6.8: enable, disable, reconnect with display-off selected, and continuous remote video, keyboard and mouse |
 | UU Super Screen (Windows virtual monitor) | Unsupported; share the existing physical monitor |
 | Control at the login screen | Unsupported; a logged-in Plasma Wayland session is required |
 | Connect to another UU device from Linux | Supported; hosting pauses while the UU window is open (verified on 2026-10-26) |
 
-The KDE profile streams **every active, non-mirrored, unrotated physical display** (up to 8; the primary is the first screen in UU). Monitors above 144 Hz are reported as 144 Hz; mirrored or rotated monitors are not streamed, and `uuway doctor` names any it leaves out. The Wine Xvfb display runs UU internally; it is not the desktop to share. Choose each real monitor as prompted when granting permission. Virtual displays and headless operation are not verified. See the [KDE adaptation notes](docs/manjaro-kde.md) for prior tests and limitations.
+The KDE profile streams **every active, non-mirrored, unrotated physical display** (up to 8; the primary is the first screen in UU). Monitors above 144 Hz are reported as 144 Hz; mirrored or rotated monitors are not streamed, and `uuway doctor` names any it leaves out. The Wine Xvfb display runs UU internally. Choose each real monitor as prompted when granting permission. Display-off uses a separately authorized KWin virtual output; see [KDE display-off support](docs/kde-virtual-display.md) for authorization and implementation. Headless operation remains unverified. See the [KDE adaptation notes](docs/manjaro-kde.md) for other limitations.
 
 ## Install
 

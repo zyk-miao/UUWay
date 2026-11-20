@@ -5,6 +5,7 @@
 #include "uu_native_input_translate.h"
 #include "native_text_client.h"
 #include "native_input_settings.h"
+#include <json-c/json.h>
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -42,6 +43,35 @@ static uint64_t lifetime;
 static const char *text_socket;
 static unsigned text_reports;
 static const char *settings_path;
+static const char *output_map_path;
+static ino_t output_map_inode;
+static struct timespec output_map_modified;
+static int reload_output_map(struct uurb_output_map *map)
+{
+    if (!output_map_path) return 1;
+    struct stat info;
+    if (lstat(output_map_path, &info) || !S_ISREG(info.st_mode) || info.st_uid != getuid() ||
+        info.st_mode & 077 || info.st_size < 1 || info.st_size > 4096) return 0;
+    if (info.st_ino == output_map_inode && info.st_mtim.tv_sec == output_map_modified.tv_sec &&
+        info.st_mtim.tv_nsec == output_map_modified.tv_nsec) return 1;
+    struct json_object *value = json_object_from_file(output_map_path), *version, *mapping;
+    struct uurb_output_map next;
+    int valid = value && json_object_get_type(value) == json_type_object &&
+        json_object_object_length(value) == 2 &&
+        json_object_object_get_ex(value, "version", &version) &&
+        json_object_get_type(version) == json_type_int && json_object_get_int64(version) == 1 &&
+        json_object_object_get_ex(value, "map", &mapping) &&
+        json_object_get_type(mapping) == json_type_string &&
+        uurb_output_map_parse(json_object_get_string(mapping), &next);
+    if (value) json_object_put(value);
+    if (!valid) return 0;
+    *map = next;
+    output_map_inode = info.st_ino;
+    output_map_modified = info.st_mtim;
+    printf("UURB_NATIVE_INPUT {\"event\":\"output_map_updated\",\"mapped_outputs\":%u}\n", map->count);
+    fflush(stdout);
+    return 1;
+}
 static struct uurb_input_settings input_settings = {100,100,0};
 static unsigned settings_generation;
 static uint64_t now_ms(void)
@@ -224,7 +254,7 @@ static int load_token(const char *path, char token[64])
         if (!((token[i] >= '0' && token[i] <= '9') || (token[i] >= 'a' && token[i] <= 'f'))) ok = 0;
     return ok;
 }
-static int serve_client(int fd, const char token[64], const struct uurb_output_map *output_map)
+static int serve_client(int fd, const char token[64], struct uurb_output_map *output_map)
 {
     uurb_x11_handshake hello;
     if (!transfer(fd, &hello, sizeof(hello), 0, 3000)) return 1;
@@ -243,6 +273,7 @@ static int serve_client(int fd, const char token[64], const struct uurb_output_m
 #endif
     uint64_t last_activity = now_ms();
     while (!stopping && now_ms() < lifetime) {
+        if (!reload_output_map(output_map)) { stopping = 1; return 0; }
         reload_settings();
         if (applied_settings != settings_generation) {
             scroll = (struct uurb_native_scroll){0}; fraction = (struct uurb_input_fraction){0};
@@ -405,6 +436,10 @@ int main(int argc, char **argv)
             if (!uurb_output_map_parse(argv[i+1], &output_map)) return 2;
             continue;
         }
+        if (!strcmp(argv[i], "--output-map-file") && !output_map_path && argv[i+1][0] == '/') {
+            output_map_path = argv[i+1];
+            continue;
+        }
 #endif
         if (argv[i+1][0] != '/') return 2;
         if (!strcmp(argv[i], "--text-socket") && !text_socket) text_socket = argv[i+1];
@@ -477,6 +512,7 @@ int main(int argc, char **argv)
 #else
     if (!configure_device(keyboard_fd, 1) || !configure_device(mouse_fd, 0)) goto done;
 #endif
+    if (!reload_output_map(&output_map)) goto done;
     reload_settings();
 #ifndef UURB_INPUT_EIS
     /* Allow udev/compositor discovery before advertising ready. No input is

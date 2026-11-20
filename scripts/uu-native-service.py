@@ -543,8 +543,8 @@ def text_endpoint(config, config_directory):
 
 
 def run(config_path, preserve_display_session=False, allow_display_reconfigure=False):
-    if plasma_wayland() and (preserve_display_session or allow_display_reconfigure):
-        raise ValueError('KDE display reconfiguration has no rollback backend')
+    if plasma_wayland() and preserve_display_session:
+        raise ValueError('KDE cannot preserve a Mutter display session')
     trial.private_directory(config_path.parent)
     config = trial.state_tools.read_private(config_path)
     names = {'schema', 'prefix', 'bundle', 'restore_state', 'state_parent', 'text_socket', 'cursor_mode'}

@@ -256,6 +256,10 @@ int uurb_native_display_topology(const char *path, struct uurb_display_topology 
     if (!count || count > UURB_DISPLAY_MAX_MONITORS) goto done;
     temporary.monitor_count = (uint32_t)count;
     uint32_t mode_total = 0, primary_count = 0;
+    struct json_object *display_backend = NULL;
+    int kscreen = json_object_object_get_ex(reply, "display_backend", &display_backend) &&
+        json_object_get_type(display_backend) == json_type_string &&
+        !strcmp(json_object_get_string(display_backend), "kscreen");
     for (size_t i = 0; i < count; ++i) {
         struct json_object *item = json_object_array_get_idx(monitors, i);
         if (!item || json_object_get_type(item) != json_type_object) goto done;
@@ -280,7 +284,8 @@ int uurb_native_display_topology(const char *path, struct uurb_display_topology 
             if (!strcmp(temporary.monitors[previous].gdi_name, monitor->gdi_name)) goto done;
         monitor->index = index;
         monitor->flags = (primary ? UURB_DISPLAY_MONITOR_PRIMARY : 0) |
-                         (virtual ? UURB_DISPLAY_MONITOR_VIRTUAL : 0);
+                         (virtual ? UURB_DISPLAY_MONITOR_VIRTUAL : 0) |
+                         (kscreen ? UURB_DISPLAY_MONITOR_KSCREEN : 0);
         monitor->x = x; monitor->y = y; monitor->width = width; monitor->height = height;
         monitor->refresh_millihz = (uint32_t)(refresh * 1000 + 0.5);
         monitor->scale_milli = (uint32_t)(scale * 1000 + 0.5);

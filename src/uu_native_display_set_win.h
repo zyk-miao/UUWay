@@ -170,6 +170,11 @@ static LONG native_display_set_config(UINT32 paths, DISPLAYCONFIG_PATH_INFO *pat
      * configuration must never be collapsed into that single-path view. */
     struct uurb_display_topology topology;
     BOOL native_topology = native_multi_active(&topology);
+    if (native_topology && (flags & SDC_USE_SUPPLIED_DISPLAY_CONFIG)) {
+        for (UINT i = 0; i < topology.monitor_count; ++i)
+            if (topology.monitors[i].flags & (UURB_DISPLAY_MONITOR_VIRTUAL | UURB_DISPLAY_MONITOR_KSCREEN))
+                return native_virtual_set_topology(paths, path, count, modes, flags);
+    }
     if (native_topology && topology.monitor_count > 1) return ERROR_NOT_SUPPORTED;
     if (paths!=1 || count<1 || count>3 || !path || !modes ||
         (!native_topology && (!display_query || !geometry_device_info)))

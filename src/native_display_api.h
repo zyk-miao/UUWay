@@ -25,6 +25,7 @@ static inline int uurb_display_scale_index(uint32_t milli)
 #define UURB_DISPLAY_MAX_MONITOR_MODES 64u
 #define UURB_DISPLAY_MONITOR_PRIMARY 1u
 #define UURB_DISPLAY_MONITOR_VIRTUAL 2u
+#define UURB_DISPLAY_MONITOR_KSCREEN 4u
 #define UURB_VIRTUAL_TOPOLOGY_CONTROL 0x55520001u
 struct uurb_display_mode { uint32_t width, height, refresh_millihz, scale_milli; };
 struct uurb_display_monitor {
