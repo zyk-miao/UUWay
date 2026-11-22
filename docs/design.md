@@ -37,6 +37,62 @@ UU captures with `IDXGIOutputDuplication` and encodes through the NVENC function
 - **Mutter pacing.** Mutter 46's screen-cast frame limiter drops frames that arrive 1–62 µs early,
   which cost a third of all frames at 60 Hz. The bundled Mutter patch tolerates that jitter.
 
+## Desktop audio
+
+`scripts/native_audio.py` owns a stable PulseAudio output for each Wine prefix,
+named `uuway_audio_<canonical-prefix SHA-256 prefix>`. It uses PCM signed 16-bit,
+48 kHz stereo. A `module-loopback` copies the default output's monitor to this
+output with a 20 ms latency target. The supervisor checks the default output
+once per second and replaces the loopback when it changes. When the dedicated
+output becomes the default, applications play into it directly and the
+loopback is removed. The system default is left under desktop/user control.
+
+The Wine bootstrap enumerates real render endpoints and selects the one whose
+friendly name exactly matches the dedicated output. It temporarily sets
+`HKCU\Software\Wine\Drivers\winepulse.drv` `DefaultOutput` and
+`DefaultVoiceOutput` only when the values are absent, and removes only values
+that still match its own settings. Existing conflicting values fail startup.
+The `native_audio_endpoint` startup event is required before declaring the
+launcher ready. Wine WASAPI loopback supplies the sound to UU's existing
+audio encoder and connection.
+
+UU also probes `%WINDIR%\system32\audioses.dll` before enabling Core Audio.
+The build downloads Microsoft's Audio Session component version
+`10.0.19041.264` from its official symbol server, using
+`scripts/fetch-audio-session.py`. The exact file is 1,560,408 bytes with SHA-256
+`25e322822aa08b7532bd7b17ef6dccf011feabcb3af4c6100d56299e6a54d568`.
+The source repository contains the downloader and checksum. AUR declares the
+same file as a checked source and supplies it before compilation.
+The component is bundled in the runtime, installed as a regular file into
+the dedicated prefix and verified on each startup. The bootstrap verifies
+that it loads and exports `DllGetClassObject`. Installation refuses an
+unexpected existing component.
+
+Runtime packaging enables this feature with `--with-audio`. Its contract pins
+the route, endpoint bootstrap version and Audio Session component identity;
+verification also checks the bootstrap export and the component's known hash.
+Source-only repackaging preserves the audio feature. Packages install
+`pulsectl`, `pefile`, the Python modules and the component for both GPU runtimes.
+
+The bridge starts after acquiring the prefix lock and stops after the Wine
+processes terminate. It removes only modules with its exact ownership
+arguments, including stale modules from a previous process. Losing the source
+or an owned module fails the session immediately. This avoids leaving a
+running session with an unusable audio route.
+
+Windows UU 4.48.1 controller playback was confirmed on 2026-11-23. Automated
+tests use real PulseAudio outputs, generated 440/880 Hz stereo tones, Wine 11,
+MMDevice enumeration, WASAPI capture and frequency/channel measurements. They
+cover output switching, direct playback, cleanup, dependency installation and
+module loss. On a desktop with MinGW, Wine 11, Xvfb, PulseAudio compatibility,
+libpulse development headers, `pulsectl` and `pefile` installed, run:
+
+```bash
+mkdir -p build/audio-validation
+UUWAY_LIVE_AUDIO_TESTS=1 TMPDIR="$PWD/build/audio-validation" \
+  python -m unittest discover -s tests -p test_native_audio_live.py -v
+```
+
 ## Pointer
 
 Physical and virtual outputs use the same native cursor contract. Mutter's *metadata* mode

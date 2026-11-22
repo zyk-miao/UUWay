@@ -16,7 +16,7 @@ jobs:
       - name: Install test dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-pytest python3-gi python3-dbus \
+          sudo apt-get install -y --no-install-recommends python3-pytest python3-gi python3-dbus python3-pulsectl python3-pefile \
             gir1.2-gtk-3.0 gir1.2-atspi-2.0 xvfb xclip x11-utils build-essential libjson-c-dev \
             libx11-dev libxfixes-dev shellcheck dbus-daemon fonts-noto-cjk librsvg2-common
       # The suites that need a GPU, a Wine prefix or a live session skip themselves.

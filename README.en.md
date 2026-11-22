@@ -8,12 +8,13 @@
 
 ## Status and limits
 
-**KDE support is experimental.** On October 14, 2026, an independent Manjaro KDE machine completed an AUR source build, pacman install, UU sign-in, screen and input authorization, and bridge startup. Separate diagnostics captured 2560 × 1600 DMA-BUF frames and successfully encoded and decoded a nonblack H.264 image. `uuway doctor` reported no failures or warnings. **An end-to-end session from another device has not yet been accepted on that machine.** The original workstation displayed the desktop, but black flicker on pointer movement still needs a live retest; audio has also produced harsh noise and is not guaranteed to work.
+**KDE support is experimental.** On October 14, 2026, an independent Manjaro KDE machine completed an AUR source build, pacman install, UU sign-in, screen and input authorization, and bridge startup. Separate diagnostics captured 2560 × 1600 DMA-BUF frames and successfully encoded and decoded a nonblack H.264 image. `uuway doctor` reported no failures or warnings. **An end-to-end session from another device has not yet been accepted on that machine.** The original workstation displayed the desktop, but black flicker on pointer movement still needs a live retest.
 
 | Feature | Manjaro KDE status |
 | --- | --- |
 | UU host, sign-in and background bridge | Installed and running on the test machine; live viewer test pending |
 | Physical-screen capture and NVIDIA H.264 encoding | Independent capture and encode/decode checks passed |
+| Desktop audio | 48 kHz stereo; playback confirmed with a Windows UU 4.48.1 controller on 2026-11-23 |
 | Pointer, keyboard and Chinese IME | Local input services and Fcitx5 add-on running; live viewer test pending |
 | Text clipboard, remote terminal and file transfer | Inherited from upstream; not fully accepted on KDE |
 | Multiple monitors | Up to 8, switchable from the viewer; each monitor is granted separately (verified with two monitors on 2026-10-26) |
@@ -53,6 +54,12 @@ uuway doctor
 Sign in in the UU window, select each monitor as prompted and save permission in KDE's screen-sharing dialog (a wrong choice is not saved; rerun `uuway setup --only portal` to choose again), then allow the separate input/clipboard request. Input rule installation may require administrator confirmation. The package contains **neither** the UU installer nor account data. Never copy a Wine prefix, login data or Portal grant from another machine.
 
 The **UUWay Console** is available from the application menu. The KDE tray starts at desktop login and can start, restart or stop the local host. Use `uuway doctor` for status or `systemctl --user status uu-native-bridge uu-native-text uu-native-display` for service details. Upgrade with pacman/an AUR helper, then run `uuway refresh`. Ubuntu `.deb`/`apt` commands such as `uuway update install` and `rollback` **do not apply on Manjaro**; the source `./install.sh` is not the Manjaro installer either.
+
+### Desktop audio
+
+Enable session sound on the controller to hear the host desktop through the UU connection. UUWay creates a dedicated `uuway_audio_<prefix identifier>` virtual output and captures the current default output, following default-output changes. Applications can also play directly into the virtual output, including when it becomes the system default.
+
+Audio requires PulseAudio or PipeWire's PulseAudio compatibility service and the `pulsectl` and `pefile` Python dependencies, supplied by the installation process. The build downloads a pinned `audioses.dll` from Microsoft's symbol server and checks its size and SHA-256. Startup installs and verifies it in the dedicated Wine prefix. See the [design notes](docs/design.md#desktop-audio) for component details, cleanup rules and real audio tests.
 
 ### Connecting to other computers
 

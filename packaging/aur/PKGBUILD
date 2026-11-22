@@ -5,10 +5,10 @@ pkgrel=2
 pkgdesc='NetEase UU Remote host bridge for KDE Wayland with native capture'
 arch=('x86_64')
 url='https://github.com/zyk-miao/UUWay'
-license=('GPL-3.0-or-later' 'LGPL-2.1-or-later' 'MIT')
+license=('GPL-3.0-or-later' 'LGPL-2.1-or-later' 'MIT' 'LicenseRef-Microsoft-Windows')
 install=uuway.install
-depends=('nvidia-utils' 'lib32-nvidia-utils' 'vulkan-icd-loader' 'pipewire' 'gst-plugin-pipewire' 'gst-plugins-base-libs'
-         'json-c' 'libx11' 'libxfixes' 'wayland' 'fcitx5' 'python' 'python-gobject' 'python-dbus'
+depends=('nvidia-utils' 'lib32-nvidia-utils' 'vulkan-icd-loader' 'pipewire' 'pulse-native-provider' 'gst-plugin-pipewire' 'gst-plugins-base-libs'
+         'json-c' 'libx11' 'libxfixes' 'wayland' 'fcitx5' 'python' 'python-gobject' 'python-dbus' 'python-pulsectl' 'python-pefile'
          'libappindicator' 'xdg-desktop-portal-kde' 'kscreen' 'lib32-glibc'
          'lib32-freetype2' 'lib32-libpng' 'xorg-server-xvfb' 'xclip' 'gtk3'
          'libunwind' 'libxext' 'libpulse' 'alsa-lib' 'gnutls'
@@ -37,14 +37,16 @@ source=('uuway::git+https://github.com/zyk-miao/UUWay.git'
         'dxbc-spirv::git+https://github.com/doitsujin/dxbc-spirv.git#commit=37a97745bddaf56d717253b0e4565904ce5eb06c'
         'display-info::git+https://github.com/doitsujin/libdisplay-info.git#commit=275e6459c7ab1ddd4b125f28d0440716e4888078'
         'spirv-headers::git+https://github.com/KhronosGroup/SPIRV-Headers.git#commit=c8ad050fcb29e42a2f57d9f59e97488f465c436d'
-        'dxvk-3.1.tar.gz::https://github.com/doitsujin/dxvk/releases/download/v3.1/dxvk-3.1.tar.gz')
+        'dxvk-3.1.tar.gz::https://github.com/doitsujin/dxvk/releases/download/v3.1/dxvk-3.1.tar.gz'
+        'audioses-10.0.19041.264.dll::https://msdl.microsoft.com/download/symbols/audioses.dll/07B4922F180000/audioses.dll')
 sha256sums=('SKIP'
             '6cb835e2171b5572b17f1c06729735c2c7e40178239d7fa6c29ef14bd9b40d16'
             '04e7b4b995262c734019099d93277d8f219f7d180ebb65b5ccb3df7f97be1078'
             'b322b50f9e8bd59687840d9a7bad10d70b12ef9bdb873298e858ff93a6205e56'
             'SKIP' '18aaee150ad540885b9706ae73ccf6febca904049de2792199a9dc18a2772e6a'
             'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP'
-            '30f9cc326874be344285582275446968cfa4c069db31ce56df312d6644179154')
+            '30f9cc326874be344285582275446968cfa4c069db31ce56df312d6644179154'
+            '25e322822aa08b7532bd7b17ef6dccf011feabcb3af4c6100d56299e6a54d568')
 
 pkgver() {
     cd "$srcdir/uuway"
@@ -60,6 +62,7 @@ prepare() {
     [[ -f "$srcdir/wine/opt/wine-stable/lib/wine/i386-windows/kernel32.dll" ]] || return 1
 
     local tree="$srcdir/uuway"
+    install -Dm644 "$srcdir/audioses-10.0.19041.264.dll" "$tree/build/native-presenter/audioses.dll"
     install -dm755 "$tree/build/dxvk-capture" "$tree/build/gpu-relay/downloads"
     cp -aT "$srcdir/dxvk" "$tree/build/dxvk-capture/source-v3.1"
     install -dm755 "$tree/build/gpu-relay/wine-review"

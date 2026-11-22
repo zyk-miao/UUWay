@@ -101,7 +101,7 @@ retains its upstream layout under `/opt/uuway`, which produces a generic
 `namcap` ELF-location warning; its upstream binaries also retain WineHQ's
 hardening settings. Scanner/camera and Wine development utilities are optional
 and are not part of the UU remote-control path. See
-[manjaro-kde.md](manjaro-kde.md) for known KDE and audio limitations.
+[manjaro-kde.md](manjaro-kde.md) for KDE limitations and desktop audio configuration.
 
 ## First setup troubleshooting
 

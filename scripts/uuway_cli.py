@@ -808,7 +808,7 @@ def package_bundle(ctx):
         ctx.releases.parent.mkdir(parents=True, exist_ok=True)
         ctx.releases.mkdir(mode=0o700, exist_ok=True)
     backend = backend_for_context(ctx)
-    result = ctx.run([PYTHON, ROOT / 'scripts/package-uu-native-runtime.py', 'package', '--with-input',
+    result = ctx.run([PYTHON, ROOT / 'scripts/package-uu-native-runtime.py', 'package', '--with-input', '--with-audio',
                       '--backend', backend, ctx.releases], capture=True)
     if ctx.dry_run:
         return ctx.releases / '<sha256>'

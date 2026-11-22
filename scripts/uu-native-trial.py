@@ -193,7 +193,7 @@ def boot_events(path, cursor=None):
     allowed = {'preflight_passed', 'configuration_conflict', 'configuration_applied', 'winlogon_started',
                'service_bootstrap_accepted', 'gui_started', 'configuration_removed', 'bootstrap_exit', 'recovery_finished',
                'native_input_broker_ready', 'native_input_hook_ready',
-               'native_gui_hook_ready', 'native_service_hook_ready'}
+               'native_gui_hook_ready', 'native_service_hook_ready', 'native_audio_endpoint'}
     with path.open(errors='replace') as stream:
         if cursor is not None:
             stream.seek(cursor[0])
@@ -425,6 +425,10 @@ def recover_interrupted(prefix, state_parent):
     env.pop('UURB_CURSOR_PRESENTATION', None)
     env.pop('UURB_DISPLAY_SOCKET', None)
     env.pop('UURB_DISPLAY_ALLOW_CHANGES', None)
+    env.pop('UURB_AUDIO_SINK', None)
+    if verified.get('native_audio_included'):
+        from native_audio import DesktopAudioBridge
+        env['UURB_AUDIO_SINK'] = DesktopAudioBridge(prefix).sink_name
     if journal.get('display_socket') is not None:
         if journal['display_socket'] != str(state_parent / 'display.sock'):
             raise ValueError('Unreviewed display recovery endpoint')
@@ -722,6 +726,7 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
     private_directory(state_parent)
     lock_fd = os.open(prefix / '.uurb-native.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     broker = launcher = None
+    audio_bridge = None
     native_input = None
     aliases = []
     created_aliases = []
@@ -744,6 +749,13 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
         fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         if prefix_processes(prefix):
             raise RuntimeError('The prefix became busy before native startup')
+        if verified.get('native_audio_session_included'):
+            from audio_session import install_component
+            install_component(prefix, bundle / 'runtime/audioses.dll')
+        if verified.get('native_audio_included'):
+            from native_audio import DesktopAudioBridge
+            audio_bridge = DesktopAudioBridge(prefix)
+            audio_bridge.start()
         if continuous:
             recover_interrupted(prefix, state_parent)
         if is_stopping():
@@ -805,6 +817,9 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
                      'UURB_CURSOR_STATE_PATH', 'UURB_CURSOR_STATE_DIR', 'UURB_CURSOR_PRESENTATION',
                      'UURB_DISPLAY_SOCKET', 'UURB_DISPLAY_ALLOW_CHANGES'):
             env.pop(name, None)
+        env.pop('UURB_AUDIO_SINK', None)
+        if audio_bridge is not None:
+            env['UURB_AUDIO_SINK'] = audio_bridge.sink_name
         if display_socket is not None:
             env['UURB_DISPLAY_SOCKET'] = str(display_socket)
         if allow_display_reconfigure:
@@ -905,6 +920,8 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
             startup_deadline = time.monotonic() + 60
             ready_events = set()
             required_events = {'gui_started', 'service_bootstrap_accepted'}
+            if audio_bridge is not None:
+                required_events.add('native_audio_endpoint')
             if with_input:
                 required_events.add('native_input_hook_ready')
             notified_ready = False
@@ -919,6 +936,8 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
             display_confirmation = confirmation_tools.MultiDisplayConfirmation(directory, prefix,
                 app / 'bin/GameViewerServer.exe', bundle, topology, state_tools.read_private) if display_socket else None
             while not is_stopping() and time.monotonic() < deadline:
+                if audio_bridge is not None:
+                    audio_bridge.poll()
                 for item in boot_events(directory / 'wine.log', cursor):
                     event('bootstrap', detail=item)
                     if item['code'] == 0:
@@ -1006,9 +1025,13 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
             if failures:
                 raise RuntimeError('Native trial cleanup incomplete; inspect its private cleanup.json')
         finally:
-            for sig, handler in previous.items():
-                signal.signal(sig, handler)
-            os.close(lock_fd)
+            try:
+                if audio_bridge is not None:
+                    audio_bridge.stop()
+            finally:
+                for sig, handler in previous.items():
+                    signal.signal(sig, handler)
+                os.close(lock_fd)
 
 
 if __name__ == '__main__':

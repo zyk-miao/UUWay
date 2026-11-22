@@ -2,14 +2,22 @@
  * edits account files or starts the retired RDP bridge. Registry writes are
  * absent-only; cleanup removes only values still matching this invocation. */
 #define WIN32_LEAN_AND_MEAN
+#define COBJMACROS
 #include <windows.h>
+#include <initguid.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <stdio.h>
 #include <wchar.h>
 #include <tlhelp32.h>
 
 struct setting { HKEY hive; const WCHAR *key, *name, *value; };
-static struct setting settings[20];
+static struct setting settings[24];
 static unsigned count;
+__declspec(dllexport) DWORD WINAPI UurbBootstrapAudioVersion(void)
+{
+    return 2;
+}
 static const WCHAR env_key[] = L"SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment";
 static const WCHAR *override_keys[] = {
     L"Software\\Wine\\AppDefaults\\GameViewerServer.exe\\DllOverrides",
@@ -20,6 +28,69 @@ static void event(const char *name, DWORD code)
 {
     printf("UURB_NATIVE_BOOT {\"event\":\"%s\",\"code\":%lu}\n", name, code);
     fflush(stdout);
+}
+
+static DWORD audio_endpoint(const WCHAR *name, WCHAR *identifier, size_t capacity)
+{
+    HRESULT result = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    if (FAILED(result)) return (DWORD)result;
+    IMMDeviceEnumerator *enumerator = NULL;
+    IMMDeviceCollection *collection = NULL;
+    result = CoCreateInstance(&CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL,
+                             &IID_IMMDeviceEnumerator, (void **)&enumerator);
+    if (SUCCEEDED(result))
+        result = IMMDeviceEnumerator_EnumAudioEndpoints(enumerator, eRender, DEVICE_STATE_ACTIVE, &collection);
+    UINT devices = 0;
+    if (SUCCEEDED(result)) result = IMMDeviceCollection_GetCount(collection, &devices);
+    BOOL found = FALSE;
+    for (UINT index = 0; SUCCEEDED(result) && index < devices; ++index) {
+        IMMDevice *device = NULL;
+        IPropertyStore *properties = NULL;
+        PROPVARIANT description;
+        PropVariantInit(&description);
+        result = IMMDeviceCollection_Item(collection, index, &device);
+        if (SUCCEEDED(result)) result = IMMDevice_OpenPropertyStore(device, STGM_READ, &properties);
+        if (SUCCEEDED(result)) result = IPropertyStore_GetValue(properties, &PKEY_Device_FriendlyName, &description);
+        if (SUCCEEDED(result) && description.vt == VT_LPWSTR && !wcscmp(description.pwszVal, name)) {
+            WCHAR *value = NULL;
+            result = IMMDevice_GetId(device, &value);
+            if (SUCCEEDED(result)) {
+                if (found || wcslen(value) >= capacity) result = E_INVALIDARG;
+                else { wcscpy(identifier, value); found = TRUE; }
+            }
+            CoTaskMemFree(value);
+        }
+        PropVariantClear(&description);
+        if (properties) IPropertyStore_Release(properties);
+        if (device) IMMDevice_Release(device);
+    }
+    if (collection) IMMDeviceCollection_Release(collection);
+    if (enumerator) IMMDeviceEnumerator_Release(enumerator);
+    CoUninitialize();
+    if (FAILED(result)) return (DWORD)result;
+    return found ? 0 : ERROR_NOT_FOUND;
+}
+
+static DWORD audio_settings(WCHAR *identifier, size_t capacity)
+{
+    WCHAR sink[128];
+    DWORD length = GetEnvironmentVariableW(L"UURB_AUDIO_SINK", sink, ARRAYSIZE(sink));
+    if (length >= ARRAYSIZE(sink)) return ERROR_INVALID_PARAMETER;
+    if (!length) return 0;
+    WCHAR component[MAX_PATH];
+    DWORD expanded = ExpandEnvironmentStringsW(L"%WINDIR%\\system32\\audioses.dll", component, ARRAYSIZE(component));
+    if (!expanded || expanded > ARRAYSIZE(component)) return ERROR_BAD_PATHNAME;
+    HMODULE session = LoadLibraryExW(component, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!session) return GetLastError();
+    BOOL complete = GetProcAddress(session, "DllGetClassObject") != NULL;
+    FreeLibrary(session);
+    if (!complete) return ERROR_PROC_NOT_FOUND;
+    DWORD status = audio_endpoint(sink, identifier, capacity);
+    if (status) return status;
+    const WCHAR *key = L"Software\\Wine\\Drivers\\winepulse.drv";
+    settings[count++] = (struct setting){HKEY_CURRENT_USER, key, L"DefaultOutput", identifier};
+    settings[count++] = (struct setting){HKEY_CURRENT_USER, key, L"DefaultVoiceOutput", identifier};
+    return 0;
 }
 
 static DWORD preflight(void)
@@ -234,6 +305,10 @@ int wmain(int argc, WCHAR **argv)
     if (bridge_log_length >= ARRAYSIZE(bridge_log)) return 2;
     if (bridge_log_length)
         settings[count++] = (struct setting){HKEY_LOCAL_MACHINE, env_key, L"UU_INPUT_BRIDGE_LOG", bridge_log};
+    WCHAR audio_id[256];
+    DWORD audio_status = audio_settings(audio_id, ARRAYSIZE(audio_id));
+    event("native_audio_endpoint", audio_status);
+    if (audio_status) return 1;
     for (unsigned i = 0; i < 3; ++i) {
         settings[count++] = (struct setting){HKEY_CURRENT_USER, override_keys[i], L"dxgi", L"native"};
         settings[count++] = (struct setting){HKEY_CURRENT_USER, override_keys[i], L"d3d11", L"native"};
