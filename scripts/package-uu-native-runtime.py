@@ -6,6 +6,7 @@ an active release, installs services, or runs the legacy RDP installer.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -13,6 +14,17 @@ import shutil
 import stat
 import struct
 import tempfile
+
+import pefile
+
+
+def verify_audio_session(path):
+    spec = importlib.util.spec_from_file_location('runtime_audio_session',
+        Path(__file__).resolve().with_name('audio_session.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.verify_component(path)
+
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = {
@@ -287,6 +299,40 @@ VAAPI_FIELDS = dict(encoder_backend='amd-vaapi', gpu_message_version=4,
 VAAPI_INPUT_CONTRACT = dict(INPUT_CONTRACT, schema_version=38, **VAAPI_FIELDS)
 VAAPI_CONTRACT = dict(CONTRACT, schema_version=39, **VAAPI_FIELDS)
 VAAPI_VIRTUAL_INPUT_CONTRACT = dict(VIRTUAL_INPUT_CONTRACT, schema_version=41, **VAAPI_FIELDS)
+AUDIO_FIELDS = dict(desktop_audio='pulse_default_output_monitor_to_owned_48k_stereo_sink',
+                    desktop_audio_endpoint='Wine_WASAPI_loopback_over_UU_connection_v1')
+PINNED_AUDIO = {'scripts/native_audio.py': 'scripts/native_audio.py'}
+AUDIO_SESSION_FIELDS = dict(desktop_audio_session='Microsoft_AudioSes_10.0.19041.264')
+PINNED_AUDIO_SESSION = {
+    'scripts/audio_session.py': 'scripts/audio_session.py',
+    'runtime/audioses.dll': 'build/native-presenter/audioses.dll',
+}
+
+
+def audio_contract_base(contract):
+    if not isinstance(contract, dict):
+        return contract, False
+    enabled = any(key in contract for key in AUDIO_FIELDS)
+    if enabled and any(contract.get(key) != value for key, value in AUDIO_FIELDS.items()):
+        raise ValueError('Unreviewed desktop audio contract')
+    sessions = any(key in contract for key in AUDIO_SESSION_FIELDS)
+    if sessions and (not enabled or any(contract.get(key) != value for key, value in AUDIO_SESSION_FIELDS.items())):
+        raise ValueError('Unreviewed Audio Session component contract')
+    return {key: value for key, value in contract.items()
+            if key not in AUDIO_FIELDS and key not in AUDIO_SESSION_FIELDS}, enabled
+
+
+def verify_audio_bootstrap(path):
+    with pefile.PE(str(path), fast_load=True) as executable:
+        executable.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY['IMAGE_DIRECTORY_ENTRY_EXPORT']])
+        exports = getattr(executable, 'DIRECTORY_ENTRY_EXPORT', None)
+        symbols = [] if exports is None else exports.symbols
+        matches = [symbol for symbol in symbols if symbol.name == b'UurbBootstrapAudioVersion']
+        if executable.FILE_HEADER.Machine != 0x8664 or len(matches) != 1 or matches[0].forwarder:
+            raise ValueError('Desktop audio requires an x64 bootstrap with UurbBootstrapAudioVersion')
+        section = executable.get_section_by_rva(matches[0].address)
+        if section is None or not section.Characteristics & 0x20000000:
+            raise ValueError('Desktop audio bootstrap export must contain executable code')
 
 
 def digest(path):
@@ -500,7 +546,9 @@ def verify(directory):
     if manifest_file.is_symlink() or manifest_file.stat().st_size > 65536:
         raise ValueError('Invalid bundle manifest')
     manifest = json.loads(manifest_file.read_text())
-    contract = manifest.get('contract')
+    contract, has_audio = audio_contract_base(manifest.get('contract'))
+    if has_audio and 'input_wire_version' not in contract:
+        raise ValueError('Desktop audio requires the supervised native runtime')
     if contract not in (VIRTUAL_INPUT_CONTRACT, VAAPI_VIRTUAL_INPUT_CONTRACT, VAAPI_CONTRACT, VAAPI_INPUT_CONTRACT, CONTRACT, INPUT_CONTRACT, DPI_INPUT_CONTRACT, DPI_V2_INPUT_CONTRACT, DEFERRED_IME_INPUT_CONTRACT, COMPOSITED_INPUT_CONTRACT, NATIVE_IME_INPUT_CONTRACT, SOURCE_PINNED_INPUT_CONTRACT, PRESET_INPUT_CONTRACT, FAILURE_CONTRACT, FAILURE_INPUT_CONTRACT, PINNED_CONTRACT, PINNED_INPUT_CONTRACT, LIFECYCLE_CONTRACT, LIFECYCLE_INPUT_CONTRACT, SOURCE_TIMING_CONTRACT, SOURCE_TIMING_INPUT_CONTRACT, PRE_TIMING_CONTRACT, RECREATE_INPUT_CONTRACT, GEOMETRY_INPUT_CONTRACT, VIRTUAL_TRACE_INPUT_CONTRACT, PADDED_TEXT_INPUT_CONTRACT, TEXT_DIAGNOSTIC_INPUT_CONTRACT, DEFAULT_DISPLAY_INPUT_CONTRACT, META_INPUT_CONTRACT, SETTINGS_INPUT_CONTRACT, GPU_CONFIRM_INPUT_CONTRACT, EMBEDDED_INPUT_CONTRACT, DISPLAY_INPUT_CONTRACT, SERVICE_INPUT_CONTRACT, REVISION_INPUT_CONTRACT, PURE_TEXT_INPUT_CONTRACT, CURSOR_INPUT_CONTRACT, RATE_INPUT_CONTRACT, REFERENCE_CONTRACT, REFERENCE_INPUT_CONTRACT, *LEGACY_DISPLAY_SET_CONTRACTS) or set(manifest) not in ({'contract', 'files'}, {'contract', 'files', 'backend'}):
         raise ValueError('Unreviewed bridge contract')
     # Feature fields are inspected only AFTER exact known-contract matching.
@@ -521,6 +569,12 @@ def verify(directory):
         if (contract not in (VIRTUAL_INPUT_CONTRACT, VAAPI_VIRTUAL_INPUT_CONTRACT) and
                 'scripts/mutter-direct-capture.py' not in manifest['files']):
             inputs.pop('scripts/mutter-direct-capture.py', None)
+    if has_audio:
+        inputs = dict(inputs, **PINNED_AUDIO)
+    has_audio_session = all(manifest['contract'].get(key) == value
+                            for key, value in AUDIO_SESSION_FIELDS.items())
+    if has_audio_session:
+        inputs = dict(inputs, **PINNED_AUDIO_SESSION)
     if set(manifest['files']) != set(inputs):
         raise ValueError('Missing or unexpected bridge component')
     for name, expected in manifest['files'].items():
@@ -532,6 +586,10 @@ def verify(directory):
             raise ValueError('Bundle paths must not cross symlinks')
         if digest(component) != expected:
             raise ValueError('Changed bridge component: ' + name)
+    if has_audio:
+        verify_audio_bootstrap(directory / 'runtime/bootstrap.exe')
+    if has_audio_session:
+        verify_audio_session(directory / 'runtime/audioses.dll')
     if contract in (VIRTUAL_INPUT_CONTRACT, VAAPI_VIRTUAL_INPUT_CONTRACT):
         verify_pe_export(directory / INPUT_BRIDGE_COMPONENT, VIRTUAL_BRIDGE_EXPORT, 'Input bridge')
         verify_pe_export(directory / 'runtime/uurb-native-display-loader.dll', VIRTUAL_CONTROL_EXPORT, 'Display loader')
@@ -546,6 +604,8 @@ def verify(directory):
         else:
             verify_display_set_bridge(directory / INPUT_BRIDGE_COMPONENT)
     return dict(release_id=release_id(manifest), components_verified=len(inputs),
+                native_audio_included=has_audio,
+                native_audio_session_included=has_audio_session,
                 native_input_included=has_input,
                 negotiated_encoder_rates='dynamic_encoder_parameters' in contract,
                 native_cursor_included='cursor_snapshot_version' in contract,
@@ -590,8 +650,17 @@ REPLACEABLE_COMPONENTS = (
 
 def package(parent, with_input=False, reuse_runtime_from=None, replace_input_bridge=None,
             replace_display_runtime=None, replace_capture_backend=None, replace_components=None,
-            backend=None):
+            backend=None, with_audio=False):
     replace_components = dict(replace_components or {})
+    reused = verify(reuse_runtime_from) if reuse_runtime_from is not None else None
+    if reuse_runtime_from is not None:
+        with_audio = with_audio or reused['native_audio_included']
+    if with_audio and not with_input:
+        raise ValueError('Desktop audio requires --with-input')
+    if (with_audio and reuse_runtime_from is not None and
+            not reused['native_audio_included'] and
+            'runtime/bootstrap.exe' not in replace_components):
+        raise ValueError('Enabling desktop audio requires its new bootstrap component')
     if replace_capture_backend is not None:
         replace_components[CAPTURE_BACKEND_COMPONENT] = replace_capture_backend
     if replace_input_bridge is not None and (not with_input or reuse_runtime_from is None):
@@ -626,15 +695,20 @@ def package(parent, with_input=False, reuse_runtime_from=None, replace_input_bri
         stage = Path(temporary) / 'bundle'
         stage.mkdir(mode=0o700)
         inputs = dict(INPUTS, **INPUT_RUNTIME, **PINNED_CAPTURE, **PINNED_MAIN_SCRIPTS) if with_input else dict(INPUTS, **PINNED_CAPTURE)
+        if with_audio:
+            inputs = dict(inputs, **PINNED_AUDIO, **PINNED_AUDIO_SESSION)
         source_inputs = backend_inputs(backend, inputs)
         sources = {name: ROOT / source for name, source in source_inputs.items()}
         contract = INPUT_CONTRACT if with_input else CONTRACT
         if reuse_runtime_from is not None:
-            verify(reuse_runtime_from)
-            base_contract = json.loads((reuse_runtime_from / 'manifest.json').read_text())['contract']
+            base_contract, _ = audio_contract_base(json.loads((reuse_runtime_from / 'manifest.json').read_text())['contract'])
             if not with_input or base_contract not in (SOURCE_PINNED_INPUT_CONTRACT, NATIVE_IME_INPUT_CONTRACT, COMPOSITED_INPUT_CONTRACT, DEFERRED_IME_INPUT_CONTRACT, INPUT_CONTRACT, DPI_INPUT_CONTRACT, DPI_V2_INPUT_CONTRACT, VIRTUAL_INPUT_CONTRACT, *LEGACY_DISPLAY_SET_CONTRACTS):
                 raise ValueError('Source-only update requires a compatible source-pinned runtime')
-            sources.update({name: reuse_runtime_from / name for name in inputs if name not in PINNED_MAIN_SCRIPTS})
+            sources.update({name: reuse_runtime_from / name for name in inputs
+                            if name not in PINNED_MAIN_SCRIPTS and name not in PINNED_AUDIO
+                            and name not in PINNED_AUDIO_SESSION})
+            if with_audio and reused.get('native_audio_session_included'):
+                sources['runtime/audioses.dll'] = reuse_runtime_from / 'runtime/audioses.dll'
             # Only reviewed Python-only capabilities may advance here: 30->31
             # and 32->33. Schema34's native claim was invalid; repair it to33.
             if base_contract in (DPI_V2_INPUT_CONTRACT, VIRTUAL_INPUT_CONTRACT):
@@ -691,6 +765,8 @@ def package(parent, with_input=False, reuse_runtime_from=None, replace_input_bri
                 raise ValueError('AMD transport must be packaged as a complete runtime, not mixed into a reused GPU bundle')
             contract = (VAAPI_VIRTUAL_INPUT_CONTRACT if contract == VIRTUAL_INPUT_CONTRACT else VAAPI_INPUT_CONTRACT) if with_input else VAAPI_CONTRACT
             sources['dxvk.conf'] = ROOT / 'config/dxvk-amd.conf'
+        if with_audio:
+            contract = dict(contract, **AUDIO_FIELDS, **AUDIO_SESSION_FIELDS)
         before = {name: digest(source) for name, source in sources.items()}
         for name, source in source_inputs.items():
             destination = stage / name
@@ -728,6 +804,7 @@ if __name__ == '__main__':
     create = commands.add_parser('package')
     create.add_argument('parent', type=Path)
     create.add_argument('--with-input', action='store_true')
+    create.add_argument('--with-audio', action='store_true')
     create.add_argument('--backend', choices=BACKENDS,
                         help='Select the immutable GPU runtime (default: legacy marker/ NVIDIA)')
     create.add_argument('--reuse-runtime-from', type=Path,
@@ -747,5 +824,5 @@ if __name__ == '__main__':
                              args.replace_input_bridge, args.replace_display_runtime,
                              args.replace_capture_backend,
                              dict(item.split('=', 1) for item in args.replace_component),
-                             args.backend)
+                             args.backend, args.with_audio)
                    if args.command == 'package' else verify(args.bundle), indent=2))

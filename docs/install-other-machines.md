@@ -72,5 +72,5 @@ Before attempting a fresh KDE installation:
 
 The earlier manual Ubuntu-container trial remains documented in
 [manjaro-kde.md](manjaro-kde.md), alongside hardware-specific results and the
-known audio limitation. Avoid copying its private build cache or installed
+desktop audio configuration. Avoid copying its private build cache or installed
 prefix to another computer.

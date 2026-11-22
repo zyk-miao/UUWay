@@ -27,7 +27,7 @@ gpu_backend=""
 packages=(build-essential gcc-mingw-w64-x86-64 meson ninja-build pkg-config jq curl git ripgrep
           libjson-c-dev libx11-dev libxfixes-dev libwayland-dev libpipewire-0.3-dev libspa-0.2-dev libvulkan-dev glslang-tools
           libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libfcitx5core-dev libfcitx5utils-dev
-          libei-dev fcitx5-modules-dev xvfb xclip python3-gi python3-dbus gir1.2-gtk-3.0 gir1.2-atspi-2.0 gir1.2-ayatanaappindicator3-0.1)
+          libei-dev fcitx5-modules-dev xvfb xclip python3-gi python3-dbus python3-pulsectl python3-pefile gir1.2-gtk-3.0 gir1.2-atspi-2.0 gir1.2-ayatanaappindicator3-0.1)
 
 usage() {
     cat <<'EOF'
@@ -294,11 +294,11 @@ if should_run 6; then
     step_title 6 "打包并启动服务"
     cd "$repo_dir"
     if ((dry_run)); then
-        run "$python" scripts/package-uu-native-runtime.py package --with-input --backend "$gpu_backend" build/uu-native-releases
+        run "$python" scripts/package-uu-native-runtime.py package --with-input --with-audio --backend "$gpu_backend" build/uu-native-releases
         bundle="$repo_dir/build/uu-native-releases/<sha256>"
     else
-        printf '   %s$ %s%s\n' "$dim" "$python scripts/package-uu-native-runtime.py package --with-input --backend $gpu_backend build/uu-native-releases" "$reset"
-        bundle="$("$python" scripts/package-uu-native-runtime.py package --with-input --backend "$gpu_backend" build/uu-native-releases | jq -r .bundle)"
+        printf '   %s$ %s%s\n' "$dim" "$python scripts/package-uu-native-runtime.py package --with-input --with-audio --backend $gpu_backend build/uu-native-releases" "$reset"
+        bundle="$("$python" scripts/package-uu-native-runtime.py package --with-input --with-audio --backend "$gpu_backend" build/uu-native-releases | jq -r .bundle)"
         [[ -d "$bundle" ]] || die "打包没有产生运行时目录。"
     fi
     ok "运行时：$bundle"

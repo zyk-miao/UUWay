@@ -106,7 +106,7 @@ class BootstrapEnvironmentTests(unittest.TestCase):
             executable = directory / 'environment.exe'
             subprocess.run(['x86_64-w64-mingw32-gcc', '-std=c11', '-Wall', '-Wextra', '-Werror',
                             '-municode', str(ROOT / 'tests/probes/native_bootstrap_environment.c'),
-                            '-ladvapi32', '-luserenv', '-o', str(executable)],
+                            '-ladvapi32', '-luserenv', '-lole32', '-luuid', '-o', str(executable)],
                            check=True, capture_output=True, timeout=30)
             env = dict(os.environ, WINEPREFIX=str(directory / 'wine'), WINEDEBUG='-all',
                        WINEDLLOVERRIDES='mscoree,mshtml=')

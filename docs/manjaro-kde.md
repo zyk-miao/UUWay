@@ -153,7 +153,7 @@ at its current path. The ordinary bridge uses an immutable per-user bundle.
 ## Black screen investigation on 2026-10-13
 
 Account login completed, but the first actual UU remote connection showed only
-the Wine application desktop and produced shrill audio. The capture broker had
+the Wine application desktop. The capture broker had
 no first-frame acknowledgments. Anonymous Portal clients were not restoring
 KDE consent, so each short-lived UU capture attempt waited for a new dialog.
 The capture wrapper now registers the installed `uuway.desktop` application
@@ -173,23 +173,17 @@ The text supervisor now checks the system Python executable identity instead of
 hardcoding Python 3.12, which rejected this host's Python 3.14. Keyboard/clipboard
 Portal consent may need one new grant under the registered application identity.
 
-Audio is temporarily disabled **only in the dedicated UU Wine prefix** while
-testing video and input. The cause of the shrill sound is not yet established.
-The previous `HKCU\Software\Wine\Drivers` `Audio` value was absent; it is now an
-empty string. To restore Wine's automatic audio-driver selection after testing:
+## Desktop audio
 
-```bash
-systemctl --user stop uu-native-bridge.service
-WINEPREFIX="$HOME/.local/share/wineprefixes/uu-remote" \
-  LD_LIBRARY_PATH="$HOME/.local/lib/uuway-tools/usr/lib32" \
-  "$HOME/.local/opt/uuway/wine-11.0/bin/wine" reg delete 'HKCU\Software\Wine\Drivers' /v Audio /f
-WINEPREFIX="$HOME/.local/share/wineprefixes/uu-remote" \
-  "$HOME/.local/opt/uuway/wine-11.0/bin/wineserver" -k
-systemctl --user start uu-native-bridge.service
-```
+Desktop audio uses a dedicated PulseAudio output and Wine WASAPI loopback at
+48 kHz stereo. The route follows the desktop's default output and also accepts
+applications playing directly into the dedicated output. The runtime includes
+the verified Microsoft Audio Session dependency needed by UU's Core Audio
+probe. Enable sound in the controller's session controls. Windows UU 4.48.1
+playback was confirmed on 2026-11-23; real PulseAudio/Wine tests cover capture,
+output changes and cleanup. See [the audio design](design.md#desktop-audio).
 
-**The native diagnostics passed; actual UU remote presentation and input still
-need another manual test. Audio remains disabled for that test.**
+## Further video investigation
 
 The next remote test confirmed working pointer movement/clicks but still had a
 black image. UU's log identified a separate Windows-side failure:

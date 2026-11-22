@@ -18,9 +18,11 @@ LIB = 'usr/lib/uuway'
 
 # Runtime Python only.  Build, audit and stage tools stay out of the package.
 RUNTIME_SCRIPTS = (
+    'audio_session.py',
     'configure-uu-wine-mappings.py',
     'desktop_backend.py',
     'install-uu-native-service.py',
+    'native_audio.py',
     'native_display_config.py',
     'native_display_confirmation.py',
     'native_display_guardian.py',
@@ -63,6 +65,7 @@ COMMANDS = {
 # (its INPUTS, INPUT_RUNTIME and PINNED_CAPTURE), plus the consent probe that
 # probe-wayland-portal.py uses by default.
 NATIVE_PRESENTER = (
+    'audioses.dll',
     'uurb-dxgi-capture-loader.dll',
     'uurb-dxgi-capture.dll.so',
     'uurb-nvenc-encode-loader.dll',

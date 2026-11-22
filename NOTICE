@@ -53,6 +53,11 @@ other third-party software keep their own licenses and trademarks. UUWay does
 not distribute any UU Remote files. The files under patches/ are changes to
 those projects and are offered under the license of the project they patch.
 
+The desktop audio build obtains Microsoft Audio Session (audioses.dll),
+version 10.0.19041.264, from Microsoft's symbol server. This component is
+copyright Microsoft Corporation and retains its proprietary Microsoft license.
+Its download URL, file size and SHA-256 are pinned in scripts/audio_session.py.
+
 The reduced protocols/ext-data-control-v1.xml comes from wayland-protocols.
 Its generated bindings are included in the clipboard bridge under this license:
 
