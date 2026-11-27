@@ -413,5 +413,68 @@ class CleanupHeartbeatTests(unittest.TestCase):
         self.assertEqual(notify.call_count, 1)
 
 
+class ProgramDirectoryTests(unittest.TestCase):
+    """UU's updater can leave no ``bin`` at all, and that must not be fatal.
+
+    The updater renames the live ``bin`` to ``<old-version>`` and unpacks the
+    new payload into ``<new-version>``, intending to rename that back. Under
+    Wine the last step is skipped, so every ``bin/...`` path disappears while
+    UU itself is perfectly runnable.
+    """
+
+    def payload(self, app, version):
+        directory = app / version
+        directory.mkdir()
+        (directory / 'GameViewerServer.exe').write_text('payload')
+        return directory
+
+    def test_only_version_directories_resolve_and_restore_the_entrypoint(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            self.payload(app, '4.47.0.1')
+            newest = self.payload(app, '4.48.0.5446')
+            (app / 'bak').mkdir()
+            (app / 'config').mkdir()
+            self.assertEqual(trial.uu_program_directory(app), newest)
+            entrypoint = trial.ensure_program_entrypoint(app)
+            self.assertTrue(entrypoint.is_symlink())
+            self.assertEqual(entrypoint.readlink(), Path('4.48.0.5446'))
+            # A second start must not disturb the link it already made.
+            self.assertEqual(trial.ensure_program_entrypoint(app), entrypoint)
+            self.assertEqual(entrypoint.readlink(), Path('4.48.0.5446'))
+
+    def test_existing_bin_wins_and_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            self.payload(app, '4.48.0.5446')
+            (app / 'bin').mkdir()
+            (app / 'bin/GameViewerServer.exe').write_text('current')
+            self.assertEqual(trial.uu_program_directory(app), app / 'bin')
+            trial.ensure_program_entrypoint(app)
+            self.assertFalse((app / 'bin').is_symlink())
+
+    def test_a_stale_link_is_replaced_by_the_newest_payload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            old = self.payload(app, '4.48.0.5446')
+            newest = self.payload(app, '4.49.0.6162')
+            (app / 'bin').symlink_to(old.name)
+            # A link pointing at a payload that no longer exists is not a bin.
+            self.assertEqual(trial.uu_program_directory(app), newest)
+            trial.ensure_program_entrypoint(app)
+            self.assertEqual((app / 'bin').readlink(), Path('4.49.0.6162'))
+
+    def test_a_real_bin_without_a_payload_fails_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            app = Path(temporary)
+            self.payload(app, '4.48.0.5446')
+            (app / 'bin').mkdir()
+            with self.assertRaisesRegex(RuntimeError, 'has no server payload'):
+                trial.uu_program_directory(app)
+            # Restoring must not silently delete a real directory UU owns.
+            with self.assertRaisesRegex(RuntimeError, 'has no server payload'):
+                trial.ensure_program_entrypoint(app)
+
+
 if __name__ == '__main__':
     unittest.main()
