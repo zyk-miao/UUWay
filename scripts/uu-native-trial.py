@@ -30,6 +30,7 @@ import uuid
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from desktop_backend import plasma_wayland, current_plasma_topology, wine_bin_directory
+from uu_program import ensure_program_entrypoint, uu_program_directory
 WINE = str(wine_bin_directory() / 'wine')
 WINESERVER = str(wine_bin_directory() / 'wineserver')
 spec = importlib.util.spec_from_file_location('native_bundle', ROOT / 'scripts/package-uu-native-runtime.py')
@@ -713,6 +714,11 @@ def run(prefix, bundle, restore_state, state_parent, duration, with_input=False,
         raise RuntimeError('The selected prefix is busy; no existing Wine process will be stopped')
     app = prefix / 'drive_c/Program Files/Netease/GameViewer'
     gui = app / 'GameViewer.exe'
+    # UU's updater renames the live bin to <old-version> and unpacks the new
+    # payload beside it; under Wine the last rename back to bin can be skipped.
+    # UU still runs from that payload, so resolve it instead of failing on the
+    # missing name every other component addresses.
+    ensure_program_entrypoint(app, log=event)
     for name in ('GameViewer.exe', 'GameViewerService.exe', 'bin/GameViewerServer.exe'):
         if not (app / name).is_file():
             raise RuntimeError('Official UU component missing: ' + name)
