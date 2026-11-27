@@ -724,6 +724,7 @@ def run_multi(path, restore_state, duration=3600, cursor_mode='embedded', cursor
     monitor_refresh_at = 0
     transaction_check_at = 0
     session_update_at = 0
+    session_update_failed = False
     cursor_states = {}
 
     def close_session(index, peer_gone=False, resetting=False, reason=None):
@@ -784,10 +785,19 @@ def run_multi(path, restore_state, duration=3600, cursor_mode='embedded', cursor
         event('ready')
         while not stopping:
             if time.monotonic() >= session_update_at:
+                # This runs twice a second for the whole session, and Plasma
+                # answers it with a rejection for every call because it has no
+                # virtual control backend. Report the transition so the
+                # condition stays visible without flooding the journal.
                 try:
                     virtual_session_state(display_socket, len(sessions))
+                    if session_update_failed:
+                        session_update_failed = False
+                        event('virtual_session_update_available')
                 except (OSError, ValueError, RuntimeError):
-                    event('virtual_session_update_unavailable')
+                    if not session_update_failed:
+                        session_update_failed = True
+                        event('virtual_session_update_unavailable')
                 session_update_at = time.monotonic() + 0.5
             if time.monotonic() >= monitor_refresh_at:
                 refreshed = {item['index']: item for item in display_monitors(display_socket)}
